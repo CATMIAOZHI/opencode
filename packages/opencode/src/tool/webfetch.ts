@@ -1,10 +1,11 @@
 import { Effect, Schema } from "effect"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { Parser } from "htmlparser2"
 import * as Tool from "./tool"
 import TurndownService from "turndown"
 import DESCRIPTION from "./webfetch.txt"
 import { isImageAttachment } from "@/util/media"
+import { createProxyFetch, getProxyForUrl } from "@/util/undici-proxy"
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
@@ -75,17 +76,28 @@ export const WebFetchTool = Tool.define(
 
           const request = HttpClientRequest.get(params.url).pipe(HttpClientRequest.setHeaders(headers))
 
+          const proxyUrl = getProxyForUrl(params.url)
+
+          const withProxy = <A, E, R>(effect: Effect.Effect<A, E, R>) => {
+            if (!proxyUrl) return effect
+            const proxyFetch = createProxyFetch(proxyUrl)
+            if (!proxyFetch) return effect
+            return Effect.provideService(effect, FetchHttpClient.Fetch, proxyFetch)
+          }
+
           // Retry with honest UA if blocked by Cloudflare bot detection (TLS fingerprint mismatch)
-          const response = yield* httpOk.execute(request).pipe(
+          const response = yield* withProxy(httpOk.execute(request)).pipe(
             Effect.catchIf(
               (err) =>
                 err.reason._tag === "StatusCodeError" &&
                 err.reason.response.status === 403 &&
                 err.reason.response.headers["cf-mitigated"] === "challenge",
               () =>
-                httpOk.execute(
-                  HttpClientRequest.get(params.url).pipe(
-                    HttpClientRequest.setHeaders({ ...headers, "User-Agent": "opencode" }),
+                withProxy(
+                  httpOk.execute(
+                    HttpClientRequest.get(params.url).pipe(
+                      HttpClientRequest.setHeaders({ ...headers, "User-Agent": "opencode" }),
+                    ),
                   ),
                 ),
             ),
