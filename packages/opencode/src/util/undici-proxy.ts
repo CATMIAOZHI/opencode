@@ -29,5 +29,10 @@ export function createProxyFetch(proxyUrl: string) {
 }
 
 export function getProxyForUrl(url: string): string | undefined {
-  return ProxyEnv.getProxyForUrl(url)
+  const explicit = ProxyEnv.getProxyForUrl(url)
+  if (explicit) return explicit
+
+  if (process.platform === "win32") {
+    return "http://127.0.0.1:7890"
+  }
 }
